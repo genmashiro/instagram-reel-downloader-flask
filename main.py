@@ -1,13 +1,16 @@
 from flask import Flask, request, render_template
 import instaloader
-import concurrent.futures
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from functools import partial
 from pathlib import Path
 
 app = Flask(__name__)
 L = instaloader.Instaloader()
 
 # Define function to download reel
-def download_reel(reel_url):
+async def download_reel(session, reel_url):
     try:
         post = instaloader.Post.from_shortcode(L.context, reel_url.split("/")[-2])
         L.download_post(post, target=str(Path(post.owner_username)))
@@ -22,12 +25,20 @@ def download_reel(reel_url):
         print(f"Error downloading reel: {e}")
         return False
 
+async def download_reels(reel_urls):
+    tasks = []
+    async with ClientSession() as session:
+        for reel_url in reel_urls:
+            task = asyncio.ensure_future(download_reel(session, reel_url))
+            tasks.append(task)
+        results = await asyncio.gather(*tasks)
+    return results
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
         reel_urls = request.form['urls'].split('\n')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            results = list(executor.map(download_reel, reel_urls))
+        results = asyncio.run(download_reels(reel_urls))
         if all(results):
             return render_template('success.html')
         else:
